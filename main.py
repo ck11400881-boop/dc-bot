@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands
 import os
+import asyncio
 import random
-import string
 from flask import Flask
 from threading import Thread
 
@@ -10,96 +10,94 @@ from threading import Thread
 # 1. 防休眠網頁伺服器
 # ==========================================
 app = Flask(__name__)
-
 @app.route('/')
-def home():
-    return "機器人運作中：亂碼與毀滅模式已就緒！"
+def home(): return "霓虹派對機器人運行中！"
 
 def run_server():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    t = Thread(target=run_server)
-    t.start()
+    Thread(target=run_server).start()
 
 # ==========================================
 # 2. Discord 機器人主程式
 # ==========================================
 intents = discord.Intents.default()
-intents.message_content = True 
+intents.message_content = True
+intents.guilds = True
+intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# 產生隨機亂碼的工具函數
-def generate_random_name(length=8):
-    # 包含小寫字母與數字
-    chars = string.ascii_lowercase + string.digits
-    return ''.join(random.choice(chars) for _ in range(length))
+# 用來紀錄哪些身分組正在「變色中」
+rainbow_tasks = {}
+
+# 彩虹顏色清單 (紅橙黃綠藍靛紫)
+RAINBOW_COLORS = [
+    0xFF0000, 0xFF7F00, 0xFFFF00, 0x00FF00, 0x0000FF, 0x4B0082, 0x9400D3
+]
 
 @bot.event
 async def on_ready():
     print(f'機器人已上線！登入身分：{bot.user}')
 
-# --- 指令 A：批量創建隨機亂碼頻道 ---
-# 使用方法：!create 10
+# --- 指令：製造並啟動彩虹身分組 ---
 @bot.command()
-async def create(ctx, count: int):
-    if not ctx.author.guild_permissions.manage_channels:
-        await ctx.send('❌ 你沒有權限玩亂碼喔！')
+async def rainbow_role(ctx, name: str):
+    if not ctx.author.guild_permissions.manage_roles:
+        await ctx.send("❌ 你沒有管理身分組的權限！")
         return
 
-    current_count = len(ctx.guild.channels)
-    if count + current_count > 500:
-        await ctx.send(f'❌ 太多了！會超過上限。')
+    # 1. 創建身分組
+    try:
+        role = await ctx.guild.create_role(name=name, reason="彩虹模式")
+        await ctx.send(f"🌈 身分組 `{name}` 已建立，開始閃爍！輸入 `!stop_rainbow` 停止。")
+    except Exception as e:
+        await ctx.send(f"⚠️ 建立失敗：{e}")
         return
 
-    await ctx.send(f'🎲 正在生成 {count} 個隨機亂碼頻道...')
-
-    for i in range(1, count + 1):
+    # 2. 啟動變色迴圈
+    rainbow_tasks[ctx.guild.id] = True
+    
+    index = 0
+    while rainbow_tasks.get(ctx.guild.id):
         try:
-            random_name = generate_random_name(10) # 產生 10 位數亂碼
-            await ctx.guild.create_text_channel(random_name)
-            
-            if i % 5 == 0:
-                await ctx.send(f'🏗️ 已完成 {i}/{count}...')
+            # 修改顏色
+            await role.edit(color=discord.Color(RAINBOW_COLORS[index]))
+            index = (index + 1) % len(RAINBOW_COLORS)
+            # 休息一秒，避免被 Discord 封鎖
+            await asyncio.sleep(1.2) 
         except Exception as e:
-            await ctx.send(f'⚠️ 出錯：{e}')
+            print(f"變色出錯：{e}")
             break
 
-    await ctx.send(f'✨ {count} 個亂碼頻道已撒滿伺服器！')
+# --- 指令：停止變色 ---
+@bot.command()
+async def stop_rainbow(ctx):
+    if ctx.guild.id in rainbow_tasks:
+        rainbow_tasks[ctx.guild.id] = False
+        await ctx.send("rainbow end。")
+    else:
+        await ctx.send("cant find it。")
 
-# --- 指令 B：【毀滅模式】刪除所有文字頻道 ---
-# 使用方法：!destroy
+# --- 之前的 Destroy 指令 (保留) ---
 @bot.command()
 async def destroy(ctx):
-    # 極其重要：只有擁有「管理伺服器」權限的人才能用
     if not ctx.author.guild_permissions.manage_guild:
-        await ctx.send('🚫 權限不足！這不是你能觸發的按鈕。')
+        await ctx.send('🚫 權限不足！')
         return
-
-    await ctx.send('☢️ 毀滅程序啟動... 正在清理所有文字頻道...')
-
-    # 取得所有的文字頻道
-    channels = ctx.guild.text_channels
-    
-    for channel in channels:
-        # 為了保證機器人還能說話，我們不刪除目前發指令的這個頻道（可選）
-        if channel == ctx.channel:
-            continue
-            
-        try:
-            await channel.delete()
-        except:
-            continue
-
-    await ctx.send('🧹 除此之外的文字頻道已全數清理完畢。')
+    await ctx.send('☢️ 正在清理文字頻道...')
+    for channel in ctx.guild.text_channels:
+        if channel != ctx.channel:
+            try: await channel.delete()
+            except: continue
+    await ctx.send('🧹 清理完畢。')
 
 # ==========================================
-# 3. 啟動機器人
+# 3. 啟動
 # ==========================================
 keep_alive()
 TOKEN = os.environ.get("TOKEN")
-
 if TOKEN:
     bot.run(TOKEN)
